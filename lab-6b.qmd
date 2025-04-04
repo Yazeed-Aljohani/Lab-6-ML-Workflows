@@ -1,5 +1,5 @@
 ---
-title: "Lab 6: Machine Learning in Hydrology – ESS 330"
+title: "Lab 6: Machine Learning – ESS 330"
 format:
   html:
     toc: true
@@ -10,9 +10,10 @@ project:
   output-dir: docs
 ---
 
-```{r setup, include=FALSE}
+```{r setup}
+knitr::opts_chunk$set(message = FALSE, warning = FALSE)
 library(tidyverse)
-library(readr)      
+library(readr)
 library(tidymodels)
 library(baguette)
 library(glue)
@@ -24,8 +25,13 @@ library(purrr)
 
 ```
 
-```{r}
-## 🔹 Q1: Download Data (10 pts)
+## 🔹 Q1: Download Data
+
+```{r q1-download}
+#| warning: false
+#| include: false
+
+
 # Create data folder
 if (!dir.exists("data")) dir.create("data")
 
@@ -36,8 +42,8 @@ download.file(pdf_url, destfile = "data/camels_attributes_v2.0.pdf")
 # Download all data types
 root <- 'https://gdex.ucar.edu/dataset/camels/file'
 types <- c("clim", "geol", "soil", "topo", "vege", "hydro")
-remote_files <- glue('{root}/camels_{types}.txt')
-local_files  <- glue('data/camels_{types}.txt')
+remote_files <- paste0(root, "/camels_", types, ".txt")
+local_files  <- paste0("data/camels_", types, ".txt")
 walk2(remote_files, local_files, download.file, quiet = TRUE)
 
 # Read and merge the data
@@ -48,8 +54,10 @@ camels <- power_full_join(camels, by = 'gauge_id')
 camels <- camels |> mutate(logQmean = log(q_mean))
 ```
 
-```{r}
 ## 🔹 Q2: Make 2 Maps (10 pts)
+
+```{r}
+
 p1 <- ggplot(camels, aes(x = gauge_lon, y = gauge_lat)) +
   borders("state", colour = "gray50") +
   geom_point(aes(color = aridity)) +
@@ -67,8 +75,12 @@ p2 <- ggplot(camels, aes(x = gauge_lon, y = gauge_lat)) +
 p1 + p2
 ```
 
-```{r}
+**Explanation:** These maps help us understand geographic patterns in aridity and precipitation, which are key predictors of streamflow.
+
 ## 🔹 Q3: Build xgboost and neural net models (20 pts)
+
+```{r}
+
 # Split data for modeling
 set.seed(42)
 split <- initial_split(camels, prop = 0.75)
@@ -98,3 +110,80 @@ autoplot(wf_set)
 rank_results(wf_set, rank_metric = "rsq", select_best = TRUE)
 
 ```
+
+**Explanation:** The autoplot shows cross-validated RMSE and R² for each model. We select the best model based on R².
+
+## 🔹 Q4: **Build your own**
+
+### Q4a: Data Splitting
+
+```{r q4a}
+
+set.seed(101)
+split <- initial_split(camels, prop = 0.75)
+train <- training(split)
+test <- testing(split)
+cv <- vfold_cv(train, v = 10)
+```
+
+### Q4b: Recipe
+
+```{r q4b}
+# Ensure 'train' is already defined before this step
+my_recipe <- recipe(logQmean ~ aridity + p_mean + elev_mean + slope_mean, data = train) |> 
+  step_log(all_predictors()) |> 
+  step_normalize(all_predictors()) |> 
+  step_naomit(all_predictors(), all_outcomes())
+```
+
+### Q4c: Define 3 Models
+
+```{r q4c}
+model_rf <- rand_forest(trees = 500) |> set_engine("ranger") |> set_mode("regression")
+model_xgb <- boost_tree(trees = 1000, learn_rate = 0.05) |> set_engine("xgboost") |> set_mode("regression")
+model_nn <- bag_mlp() |> set_engine("nnet") |> set_mode("regression")
+```
+
+### Q4d: Workflow Set
+
+```{r q4d}
+my_wf_set <- workflow_set(
+  preproc = list(my_recipe),
+  models = list(model_rf, model_xgb, model_nn)
+) |> 
+  workflow_map("fit_resamples", resamples = cv)
+```
+
+### Q4e: Evaluation
+
+```{r q4e}
+autoplot(my_wf_set)
+rank_results(my_wf_set, rank_metric = "rsq", select_best = TRUE)
+```
+
+**Explanation:** This step shows model performance across resamples. We choose the model with the highest R².
+
+### Q4f: Extract and Evaluate Best Model on Test Set
+
+```{r q4f}
+#| warning: false
+best_model_id <- pull(rank_results(my_wf_set, rank_metric = "rsq", select_best = TRUE), wflow_id)[1]
+final_wf <- extract_workflow(my_wf_set, id = best_model_id)
+final_fit <- final_wf |> fit(data = train)
+final_data <- augment(final_fit, new_data = test)
+
+# Evaluate
+metrics(final_data, truth = logQmean, estimate = .pred)
+
+# Plot
+ggplot(final_data, aes(x = logQmean, y = .pred, color = aridity)) +
+  geom_point() +
+  geom_abline(linetype = 2, color = "red") +
+  theme_linedraw() +
+  labs(title = "Observed vs Predicted Log Mean Flow",
+       x = "Observed",
+       y = "Predicted",
+       color = "Aridity")
+```
+
+**Explanation:** This final step shows how well the best model generalizes to unseen data. A tight cluster along the 1:1 line indicates strong predictive performance.
