@@ -5,6 +5,11 @@ format:
     toc: true
     toc-depth: 3
     code-fold: true
+    code-summary: "Show Code"
+    code-overflow: wrap
+    theme: cosmo
+    number-sections: true
+    self-contained: true
 project:
   type: website
   output-dir: docs
@@ -54,7 +59,7 @@ camels <- power_full_join(camels, by = 'gauge_id')
 camels <- camels |> mutate(logQmean = log(q_mean))
 ```
 
-## 🔹 Q2: Make 2 Maps (10 pts)
+## 🔹 Q2: Make 2 Maps
 
 ```{r}
 
@@ -77,7 +82,7 @@ p1 + p2
 
 **Explanation:** These maps help us understand geographic patterns in aridity and precipitation, which are key predictors of streamflow.
 
-## 🔹 Q3: Build xgboost and neural net models (20 pts)
+## 🔹 Q3: Build xgboost and neural net models
 
 ```{r}
 
