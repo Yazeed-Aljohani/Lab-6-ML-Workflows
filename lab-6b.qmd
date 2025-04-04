@@ -20,7 +20,6 @@ library(powerjoin)
 library(ggthemes)
 library(patchwork)
 library(scales)
-library(purrr)
 
 ```
 
