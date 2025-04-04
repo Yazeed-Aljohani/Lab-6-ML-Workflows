@@ -5,18 +5,12 @@ format:
     toc: true
     toc-depth: 3
     code-fold: true
-    code-summary: "Show Code"
-    code-overflow: wrap
-    theme: cosmo
-    number-sections: true
-    self-contained: true
 project:
   type: website
   output-dir: docs
 ---
 
 ```{r setup}
-knitr::opts_chunk$set(message = FALSE, warning = FALSE)
 library(tidyverse)
 library(readr)
 library(tidymodels)
@@ -33,8 +27,6 @@ library(purrr)
 ## 🔹 Q1: Download Data
 
 ```{r q1-download}
-#| warning: false
-#| include: false
 
 
 # Create data folder
@@ -116,7 +108,7 @@ rank_results(wf_set, rank_metric = "rsq", select_best = TRUE)
 
 ```
 
-**Explanation:** The autoplot shows cross-validated RMSE and R² for each model. We select the best model based on R².
+**Explanation:** The autoplot shows cross-validated RMSE and R² for each model. I select the best model based on R².
 
 ## 🔹 Q4: **Build your own**
 
@@ -166,7 +158,7 @@ autoplot(my_wf_set)
 rank_results(my_wf_set, rank_metric = "rsq", select_best = TRUE)
 ```
 
-**Explanation:** This step shows model performance across resamples. We choose the model with the highest R².
+**Explanation:** This step shows model performance across resamples. I choose the model with the highest R².
 
 ### Q4f: Extract and Evaluate Best Model on Test Set
 
