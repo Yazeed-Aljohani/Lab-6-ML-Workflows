@@ -2,7 +2,16 @@ project:
   title: "lab-6"
   output-dir: docs
   type: website
-  
+
+website:
+  title: "ESS 330 Labs"
+  navbar:
+    left:
+      - text: "Lab 6"
+        href: lab6.html
+      - text: "Lab 8"
+        href: hyperparameter-tuning.html
+
 format: 
   html: 
     self-contained: true
