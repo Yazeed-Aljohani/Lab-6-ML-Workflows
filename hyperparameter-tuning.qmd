@@ -1,0 +1,193 @@
+---
+title: "Hyperparameter Tuning"
+author: "Yazeed Aljohani"
+format: html
+editor: visual
+---
+
+```{r}
+#| warning: false
+library(tidyverse)
+library(tidymodels)
+library(skimr)
+library(visdat)
+library(ggpubr)
+library(powerjoin)
+library(patchwork)
+library(ggthemes)
+```
+
+```{r}
+# Download the PDF documentation
+pdf_url <- "https://gdex.ucar.edu/dataset/camels/file/camels_attributes_v2.0.pdf"
+download.file(pdf_url, destfile = "data/camels_attributes_v2.0.pdf")
+
+# Download all data types
+root <- 'https://gdex.ucar.edu/dataset/camels/file'
+types <- c("clim", "geol", "soil", "topo", "vege", "hydro")
+remote_files <- paste0(root, "/camels_", types, ".txt")
+local_files  <- paste0("data/camels_", types, ".txt")
+walk2(remote_files, local_files, download.file, quiet = TRUE)
+
+# Read and merge the data
+camels <- map(local_files, read_delim, show_col_types = FALSE)
+camels <- power_full_join(camels, by = 'gauge_id')
+
+# Add log of q_mean
+camels <- camels |> mutate(logQmean = log(q_mean))
+```
+
+```{r}
+set.seed(101)
+split <- initial_split(camels, prop = 0.75)
+train <- training(split)
+test <- testing(split)
+cv <- vfold_cv(train, v = 10)
+```
+
+```{r}
+my_recipe <- recipe(logQmean ~ aridity + p_mean + elev_mean + slope_mean, data = train) |> 
+  step_log(all_predictors()) |> 
+  step_normalize(all_predictors()) |> 
+  step_naomit(all_predictors(), all_outcomes())
+```
+
+### Defining a tunable model
+
+```{r}
+# Defining a tunable XGBoost model
+xgb_tune <- boost_tree(
+  trees = tune(),
+  learn_rate = tune(),
+  tree_depth = tune()
+) |> 
+  set_engine("xgboost") |> 
+  set_mode("regression")
+
+```
+
+### Creating a workflow for tuning
+
+```{r}
+# Using the same recipe from Lab 6
+wf_tune <- workflow() |> 
+  add_model(xgb_tune) |> 
+  add_recipe(my_recipe)
+
+```
+
+### Exploring tunable hyperparameter ranges
+
+```{r}
+dials <- extract_parameter_set_dials(wf_tune)
+dials
+
+```
+
+### Creating the search grid
+
+```{r}
+# Create a Latin Hypercube grid
+set.seed(123)
+my.grid <- grid_latin_hypercube(dials, size = 25)
+
+```
+
+### Tuning the model using the grid
+
+```{r}
+# Tune over the resamples
+model_params <- tune_grid(
+  wf_tune,
+  resamples = cv,  # from Lab 6
+  grid = my.grid,
+  metrics = metric_set(rmse, rsq, mae),
+  control = control_grid(save_pred = TRUE)
+)
+
+```
+
+### Visualize tuning results
+
+```{r}
+autoplot(model_params)
+
+```
+
+```{r}
+collect_metrics(model_params) |> 
+  arrange(mean)
+
+```
+
+```{r}
+show_best(model_params, metric = "mae")
+hp_best <- select_best(model_params, metric = "mae")
+
+```
+After tuning the XGBoost model, the best combination of hyperparameters included 306 trees, a tree depth of 10, and a learning rate around 0.015. This setup gave the lowest mean absolute error (MAE) of about 0.235 during cross-validation. What stood out to me is that the top few combinations all performed pretty similarly, which makes me feel more confident that the model is stable and not just getting lucky with one specific set of values.
+
+### Finalizing the workflow
+
+```{r}
+final_wf <- finalize_workflow(wf_tune, hp_best)
+
+```
+
+### Fitting and evaluate on the test set
+
+```{r}
+final_fit <- last_fit(final_wf, split)
+
+# Metrics
+collect_metrics(final_fit)
+
+# Predictions
+preds <- collect_predictions(final_fit)
+
+# Plot predicted vs actual
+ggplot(preds, aes(x = .pred, y = logQmean)) +
+  geom_point() +
+  geom_abline(linetype = "dashed") +
+  geom_smooth(method = "lm", se = FALSE, color = "blue") +
+  labs(title = "Final Model: Predicted vs Observed", x = "Predicted", y = "Observed") +
+  theme_minimal()
+
+```
+When I tested the final model on the test dataset, it had an RMSE of about 0.354 and an R² of 0.912. That means it explained more than 91% of the variation in logQmean, which I think is a strong result for this kind of regression problem. The low RMSE also tells me the model’s predictions are pretty close to the actual values. So overall, I’d say it generalizes well and didn’t just perform well during training.
+
+The scatter plot of predicted vs actual logQmean shows a really tight alignment along the 1:1 line. That tells me the model is doing a solid job — it's not systematically overpredicting or underpredicting. I also added a smoothed line with geom_smooth(), and it basically follows the diagonal, which is a good sign that the model is learning the overall pattern accurately.
+
+
+### Mapping predictions and residuals
+
+```{r}
+# Fit to full dataset
+fit_final <- fit(final_wf, data = camels)
+
+# Augment with predictions
+camels_aug <- augment(fit_final, new_data = camels) |> 
+  mutate(residual = (logQmean - .pred)^2)
+
+# Plot predictions map
+p_pred <- ggplot(camels_aug, aes(x = gauge_lon, y = gauge_lat, color = .pred)) +
+  borders("state") +
+  geom_point() +
+  scale_color_viridis_c() +
+  labs(title = "Predicted logQmean") +
+  theme_map()
+
+# Plot residuals map
+p_resid <- ggplot(camels_aug, aes(x = gauge_lon, y = gauge_lat, color = residual)) +
+  borders("state") +
+  geom_point() +
+  scale_color_viridis_c() +
+  labs(title = "Squared Residuals") +
+  theme_map()
+
+# Combine maps
+p_pred + p_resid
+
+```
+
+The map of predicted logQmean looks smooth and seems to reflect regional differences in climate or terrain across the U.S. I think this means the model picked up on some real geographic trends in streamflow. The residual map mostly shows small errors, though a few spots have higher values. Those might be sites where streamflow is influenced by something the model didn’t capture — like human intervention or more localized features. But overall, the model seems to do well across most areas.
